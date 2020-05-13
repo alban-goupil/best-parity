@@ -170,9 +170,9 @@ static int gf_free() {
    vecteur x. */
 static inline bool chk_valid(size_t n, gf_elt *h, gf_elt *x) {
   gf_elt acc = gf_zero;
-  for (size_t i = 0; i < n; ++i)
+  for (size_t i = 0; i < n-1; ++i)
     gf_accmul(&acc, *h++, *x++);
-  return acc == gf_zero;
+  return acc == *x;
 }
 
 
@@ -226,75 +226,6 @@ static inline bool cw_next(size_t n, gf_elt *h, gf_elt *x) {
 }
 
 
-/* * Constellation et mapping
- *
- * Il faut maintenant représentation la constellation
- * utilisée comme par exemple la QAM-16 ou autre. L'idée est
- * de prendre un fichier descriptif qui liste les points du
- * plan.
- */
-typedef struct { int x, y; } symb_t;
-
-
-/* Le mapping est l'association entre les éléments de GF(q)
- * et les identifiants de ces points. Ainsi
- * constellation[mapping[x]] est le point de R^2 vers lequel
- * est envoyé le nombre x de GF(q). */
-static bool mapping_read(FILE *f, size_t n, size_t *mapping) {
-  for (size_t i = 0; i < n; ++i)
-    if (1 != fscanf(f, "%zu", mapping + i))
-      return false;
-    else if (mapping[i] >= n)
-      error("Valeur de mapping hors bornes\n");
-  return true;
-}
-
-
-/* * Voisinage
- *
- * Une constellation et un mapping définit une distance
- * entre les éléments de GF(q). En effet la distance entre
- * x et y est hypot(constellation[mapping[x]],
- * constellation[mapping[x]]).
- *
- * Il s'agit maintenant de construire un tableau de
- * voisinage V tel que V[x] retourne une liste de paires (y,
- * d^2) avec d^2 la distance au carré de x et y selon la
- * définition ci-dessus. L'intérêt est que la liste est
- * triée par d^2 croissante ce qui permet de faire un
- * élagage rapide lorsqu'on itère sur les voisins.
- *
- * Pour éviter les racines, au lieu d'utiliser les
- * distances, ce programme utilise les quadrances (voir la
- * trigonométrie rationnelle à la Wildberger).
- */
-
-typedef struct { gf_elt element; unsigned quadrance; } neighbor_t;
-
-
-/* Initialise un itérateur dans delta sur les incréments
-   delta pour obtenir les voisins à partir de x. */
-static inline void delta_begin(size_t n, size_t *dmax, size_t *d) {
-  d[0] = 1;
-  for (size_t i = 1; i < n; ++i)
-    d[i] = 0;
-}
-
-
-/* Passe à l'incrément suivant. */
-static inline bool delta_next(size_t n, size_t *dmax, size_t *d) {
-  /* passage au suivant sans coupure */
-  size_t i = 0;
-  for (i = 0; i < n-1; ++i)
-    if (d[i] >= dmax[i]-1)
-      d[i] = 0;
-    else
-      break;
-  if (i == n-1) return false;
-  d[i]++;
-  return true;
-}
-
 
 /* * Spectre
  *
@@ -303,35 +234,16 @@ static inline bool delta_next(size_t n, size_t *dmax, size_t *d) {
  */
 
 
-/* Affiche le spectre sur la sortie standard. */
-static inline void sp_print(unsigned long *S, unsigned qmax) {
-  unsigned long sum = 0;
-  for (unsigned i = 0; i <= qmax; ++i)
-    sum += S[i];
-  printf("(%lu) ", sum);
-  for (unsigned i = 0; i <= qmax; ++i)
-    if (S[i] > 0)
-      printf("%u:\t%lu\t", i, S[i]);
-}
-
-
 /* Compare deux spectres. Le plus grand le meilleure. */
 static inline int sp_cmp(unsigned long *a, unsigned long *b, unsigned qmax) {
-  for (size_t i = 0; i <= qmax; ++i)
+  for (size_t i = 2; i < qmax; ++i)
     if (a[i] == b[i])
       continue;
-    else
-      return (int)((long)b[i] - (long)a[i]);
+    else  
+      return (b[i] > a[i]) ? 1 : -1;
   return 0;
 }
 
-
-static inline unsigned sp_qmin(unsigned long *S, unsigned qmax) {
-  for (unsigned i = 1; i <= qmax; ++i)
-    if (S[i] > 0)
-      return i;
-  return 0;
-}
 
 
 /* * Programme principal
@@ -366,31 +278,27 @@ int main(int argc, char **argv) {
   size_t m;            /* GF(2^m) */
   size_t q;            /* Taille constellation == gf_size */
   size_t n = 3;        /* Longueur du code */
-  unsigned qmin = 0, qmax = UINT_MAX; /* Intervalle des spectres */ 
+  unsigned qmax = UINT_MAX;   /* Intervalle des spectres */ 
 
   char constfile[81] = ""; /* Nom du fichier de constellation */
   char mapsfile[81] = "";  /* Nom du ficher de mappings */
-  symb_t *C = NULL;        /* La constellation */
   FILE *f = NULL;
 
   /* Lecture des arguments ou de l'entrée standard */
   if (argc == 1) {              /* Mode interactif */
     printf("codelength: "); fflush(stdout);
     if (1 != scanf("%zu", &n)) error("Codelength doit être entier");
-    printf("min quadrance: "); fflush(stdout);
-    if (1 != scanf("%u", &qmin)) error("Qmin doit être entier");
     printf("max quadrance: "); fflush(stdout);
     if (1 != scanf("%u", &qmax)) error("Qmax doit être entier");
     printf("constellation file: "); fflush(stdout);
     if (1 != scanf("%80s", constfile)) error("Nom de fichier imcompréhensible"); 
     printf("mappings file: "); fflush(stdout);
     if (1 != scanf("%80s", mapsfile)) error("Nom de fichier imcompréhensible");
-  } else if (argc == 6) {       /* Mode ligne de commande */
+  } else if (argc == 5) {       /* Mode ligne de commande */
     if (1 != sscanf(argv[1], "%zu", &n)) error("L'option codelength doit être entier: '%s'", argv[1]);
-    if (1 != sscanf(argv[2], "%u", &qmin)) error("L'option qmin doit être entier: '%s'", argv[2]);
-    if (1 != sscanf(argv[3], "%u", &qmax)) error("L'option qmax doit être entier: '%s'", argv[3]);
-    strncpy(constfile, argv[4], 80);
-    strncpy(mapsfile, argv[5], 80);
+    if (1 != sscanf(argv[2], "%u", &qmax)) error("L'option qmax doit être entier: '%s'", argv[3]);
+    strncpy(constfile, argv[3], 80);
+    strncpy(mapsfile, argv[4], 80);
   } else {                      /* Mode aide */
     printf("Usage: %s codelength qmin qmax constellation mappings\n", argv[0]);
     return -1;
@@ -401,19 +309,13 @@ int main(int argc, char **argv) {
     error("Impossible d'ouvrir le fichier constellation '%s'.", constfile);
   q = 0;
   m = 0;
-  C = malloc((1 << m) * sizeof *C);
+  struct { int x, y; } *C = malloc((1 << m) * sizeof *C);
   while (2 == fscanf(f, "%u%u", &C[q].x, &C[q].y))
     if (++q == (1 << m))
       if (NULL == (C = realloc(C, (1 << ++m) * sizeof *C)))
         error("Allocation mémoire impossible.");
   m--;
-  fclose(f);
-  if (1 << m != q)
-    error("Corps de caractéristique 2 uniquement.");
-
-  if (n >= q)
-    error("codelength doit être inférieur à l'ordre du corps."); 
-    
+  fclose(f);    
 
   printf("Constellation: %s\n", constfile);
 #ifdef DEBUG
@@ -422,206 +324,243 @@ int main(int argc, char **argv) {
 #endif
 
   /* Construire le corps en premier */
+  if (1 << m != q) error("Corps de caractéristique 2 uniquement.");
+  if (n >= q) error("codelength doit être inférieur à l'ordre du corps."); 
+
   gf_init(primitives[m]);
   printf("GF(%zu = 2^%zu)\n", q, m);  
-  printf("codelength: %zu\nintervalle: [%u, %u]\n", n, qmin, qmax); 
+  printf("codelength: %zu\n", n);
+  printf("qmax: %u\n", qmax); 
   
-  
-  /* Allocation de la mémoire */
-  gf_elt *h = malloc(n * sizeof *h); // Parity
-  gf_elt *x = malloc(n * sizeof *x); // Mot de code x
-  gf_elt *y = malloc(n * sizeof *y); // Voisin y
-  size_t *d = malloc(n * sizeof *d); // Incrément d
-  size_t *dmax = malloc(n * sizeof *dmax); // Incrément maximal dmax par position
 
+  /* ** Lecture du mapping */
   size_t *pi = malloc(q * sizeof *pi); // Le mapping
-
-  gf_elt *Hbest = malloc(n * sizeof *h); // Meilleure parité
-
-  /* Pour les spectres */
-  unsigned long *Sbest = malloc((qmax + 1) * sizeof *Sbest); // Meilleur spectre
-  unsigned long *Scur = malloc((qmax + 1) * sizeof *Sbest);  // Spectre courant
   
-
-  /* Q[i][j] retourne la quadrance (distance au carré) entre
-     les points de la constellation donnés par pi[i] et
-     pi[j] pour i et j éléments de GF(q). */
-  unsigned **Q = malloc(q * sizeof *Q);
-  Q[0] = malloc(q * q * sizeof **Q);
-  for (size_t i = 1; i < q; ++i)
-    Q[i] = Q[0] + i * q;
-
-  /* V[i][j] retourne le j-ème élément du corps fini qui est
-     le plus proche de l'élément i selon la quadrance Q. */ 
-  gf_elt **V = malloc(q * sizeof *V);
-  V[0] = malloc(q * q * sizeof **V);
-  for (size_t i = 1; i < q; ++i)
-    V[i] = V[0] + i * q;
-
-  /* Ouverture du fichier de mapping */
   if (strcmp (mapsfile, "-") == 0)
     f = stdin;
   else if (NULL == (f = fopen(mapsfile, "r")))
     error("Impossible d'ouvrir le fichier mapping '%s'.", mapsfile); 
 
-  /* Pour chaque mapping de f */
-  while (mapping_read(f, q, pi)) {
-    printf("Mapping:");
-    for (size_t i = 0; i < q; ++i)
-      printf(" %zu", pi[i]);
+  for (size_t i = 0; i < q; ++i)
+    if (1 != fscanf(f, "%zu", pi + i))
+      error("Fichier mapping incomplet\n");
+    else if (pi[i] >= q)
+      error("Valeur de mapping hors bornes\n");
+
+  printf("Mapping:");
+  for (size_t i = 0; i < q; ++i)
+    printf(" %zu", pi[i]);
+  printf("\n");
+
+
+  /* ** Calcul des quadrances et voisinages */
+  
+  /* Q[i*q + j] retourne la quadrance (distance au carré)
+     entre les points de la constellation donnés par pi[i]
+     et pi[j] pour i et j éléments de GF(q). */
+  unsigned *Q = malloc(q * q * sizeof *Q);
+  for (gf_elt i = 0; i < q; ++i)
+    for (gf_elt j = 0; j < q; ++j) {
+      unsigned dx = C[pi[i]].x - C[pi[j]].x;
+      unsigned dy = C[pi[i]].y - C[pi[j]].y;
+      Q[i * q + j] = dx * dx + dy * dy;
+    }
+
+#ifdef DEBUG
+  printf("Quadrances\n");
+  for (gf_elt i = 0; i < q; ++i) {
+    printf("  %2u:", i);
+    for (gf_elt j = 0; j < q; ++j) {
+      printf("\t%u", Q[i * q + j]);
+    }
     printf("\n");
+  }
+#endif
 
-    /* On initialise le meilleur spectre */
-    memset(Sbest, 0, (1 + qmax) * sizeof *Sbest);
-    Sbest[qmin-1] = 1;
+
+  /* V[i * q + j] retourne le j-ème élément du corps fini
+     qui est le plus proche de l'élément i selon la
+     quadrance Q. */ 
+  unsigned *V = malloc(q * q * sizeof *V);
+  for (gf_elt i = 0; i < q; ++i) {
+    /* Alias sur les lignes V[i*q + ...]  et Q[i*q + ...] */
+    unsigned *Vi = V + i * q;
+    unsigned *Qi = Q + i * q;
     
-    /* On met à jour le tableau des quadrances */
-#ifdef DEBUG
-    printf("Quadrances");
-#endif
-    unsigned cqmin = qmax;
-    for (gf_elt i = 0; i < q; ++i) {
-#ifdef DEBUG
-      printf("\n  %d:", i);
-#endif
-      for (gf_elt j = 0; j < q; ++j) {
-        unsigned dx = C[pi[i]].x - C[pi[j]].x;
-        unsigned dy = C[pi[i]].y - C[pi[j]].y;
-        unsigned q = dx * dx + dy * dy; 
-        Q[i][j] = q;
-        if (q > 0 && q < cqmin)
-          cqmin = q;
-#ifdef DEBUG
-        printf("\t%u", Q[i][j]);
-#endif
-      }
-    }
-#ifdef DEBUG
-    printf("\nmin = %u\n", cqmin);
-#endif
+    /* Initialisation sur la permutation identité */
+    for (gf_elt j = 0; j < q; ++j) Vi[j] = j;
     
-    
-    /* Puis on met à jour les voisinages */
-#ifdef DEBUG
-    printf("Voisinage\n");
-#endif
-    for (gf_elt i = 0; i < q; ++i) {
-      /* Initialisation sur la permutation identité */
-      for (gf_elt j = 0; j < q; ++j)
-        V[i][j] = j;
-      // On trie Vi sur la quadrance croissante
-      for (gf_elt j = 0; j < q; ++j)
-        for (gf_elt k = j+1; k < q; ++k)
-          if (Q[i][V[i][k]] < Q[i][V[i][j]]) {
-            size_t itmp = V[i][j];
-            V[i][j] = V[i][k];
-            V[i][k] = itmp;
-          }
-#ifdef DEBUG
-      printf("  %d:", i);
-      for (gf_elt j = 0; j < q; ++j)
-        printf("\t%d", V[i][j]);
-      printf("\n");
-#endif
-    }
-    
-    /* Pour chaque parité h de longueur n */
-    chk_begin(n, h);
-    do {
-#ifdef DEBUG
-      print_array("h: ", "%u ", n, h);
-#endif
-      memset(Scur, 0, (1 + qmax) * sizeof *Scur); /* RAZ du Spectre pour cette parité */
-      
-      /* Pour chaque mot de code x */
-      cw_begin(n, h, x);
-      do {
-#ifdef DEBUG
-        print_array("  x: ", "%u ", n, x);
-#endif
-        /* Calcul de l'incrément maximal */
-        for (size_t i = 0; i < n; ++i) {
-          dmax[i] = q;
-          for (size_t j = 0; j < q; ++j)
-            if (Q[x[i]][V[x[i]][j]] > qmax - cqmin) {
-              dmax[i] = j;
-              break;
-            }
+    /* On trie Vi sur la quadrance croissante */
+    for (gf_elt j = 0; j < q; ++j)
+      for (gf_elt k = j+1; k < q; ++k)
+        if (Qi[Vi[k]] < Qi[Vi[j]]) {
+          size_t itmp = Vi[j];
+          Vi[j] = Vi[k];
+          Vi[k] = itmp;
         }
+  }
+
+  /* Recherche du cappage sur delta */
+  unsigned cqmin = Q[1];
+  for (size_t i = 1; i < q; ++i)
+    if (cqmin > Q[i * q + V[i * q + 1]])
+      cqmin = Q[i * q + V[i * q + 1]];
+
+  size_t *dcap = malloc(n * q * sizeof *dcap);
+  for (size_t w = 0; w < n; ++w) {
+    for (gf_elt j = 0; j < q; ++j) {
+      size_t d = 0;
+      for (d = 0; d < q; ++d)
+        if (Q[j * q + V[j * q + d]] > qmax - (w > 2 ? w-1 : 1) * cqmin)
+          break;
+      dcap[w * q + j] = d;
+    }
+  }
+
 #ifdef DEBUG
-        print_array("  dmax: ", "%zu ", n, dmax);
-#endif
-        
-        /* Pour incrément qui donnera le voisin */
-        delta_begin(n, dmax, d);
-        do {
-#ifdef DEBUG
-          print_array("  d: ", "%zu ", n, d);
+  printf("Voisinage, cqmin = %u\n", cqmin);
+  for (gf_elt i = 0; i < q; ++i) {
+    printf("  %d:", i);
+    for (gf_elt j = 0; j < q; ++j)
+      printf("\t%d", V[i * q + j]);
+    printf("\n");
+  }
+
+  printf("dcap\n");
+  for (size_t w = 0; w < n; ++w) {
+    printf("  %zu:\t", w);
+    for (gf_elt i = 0; i < q; ++i) printf(" %zu", dcap[w * q + i]);
+    printf("\n");
+  }
 #endif
 
+  
+  /* Allocation de la mémoire */
+  gf_elt *h = malloc(n * sizeof *h); // Parity
+  gf_elt *x = malloc(n * sizeof *x); // Mot de code x
+  gf_elt *y = malloc(n * sizeof *y); // Voisin y
+
+  /* Pour les incréments on utilise l'algo H de TACOP */
+  size_t *da = malloc(n * sizeof *da); // Incrément d
+  size_t *df = malloc(n * sizeof *df);
+  int *dd = malloc(n * sizeof *dd); // Direction
+  size_t dw = 0;
+  
+  /* Pour les spectres */
+  unsigned long *Sbest = calloc(qmax,  sizeof *Sbest); // Meilleur spectre
+  unsigned long *Scur = calloc(qmax, sizeof *Scur); // Spectre courant
+  for (size_t i=0; i < qmax; ++i) Sbest[i] = UINT_MAX; // Pour un grand minimum initial
+
+      
+  /* Pour chaque parité h de longueur n */
+  chk_begin(n, h);
+  do {
+#ifdef DEBUG
+    print_array("h: ", "%u ", n, h);
+#endif
+    memset(Scur, 0, qmax * sizeof *Scur); /* RAZ du Spectre pour cette parité */
+      
+    /* Pour chaque mot de code x */
+    cw_begin(n, h, x);
+    do {
+      /* Initialisation des deltas */
+      for (size_t j = 0; j < n-1; ++j) {
+        da[j] = 0;
+        df[j] = j;
+        dd[j] = 1;
+      }
+      df[n-1] = n-1;
+      dw = 0;
+      
+      for (;;) {
         /* Récupère un mot de code à partir des incréments
            et calcul de la quadrance. */
-          unsigned quad = 0;
-          y[n-1] = gf_zero;
-          for (size_t i = 0; i < n-1; ++i) {
-            y[i] = V[x[i]][d[i]];
-            quad += Q[x[i]][y[i]];
-            gf_accmul(&y[n-1], h[i], y[i]);
-          }
-          quad += Q[x[n-1]][y[n-1]];
-          if (quad > qmax)
-            continue; // Passer au delta suivant
-          
+        unsigned quad = 0;
+        y[n-1] = gf_zero;
+        for (size_t i = 0; i < n-1; ++i) {
+          y[i] = V[x[i] * q + da[i]];
+          quad += Q[x[i] * q + y[i]];
+          gf_accmul(y+n-1, h[i], y[i]);
+        }
+        quad += Q[x[n-1] * q + y[n-1]];
+
 #ifdef DEBUG
-          print_array("    d: ", "%zu ", n, d);
-          printf("         %u\n", quad);
-
-          /* y doit maintenant être un mot de code */
-          if (!chk_valid(n, h, y))
-            error("Oops\n");
-
-          print_array("      y: ", "%u ", n, y);
+        printf("x:"); for (size_t i=0; i < n; ++i) printf(" %2u", x[i]);
+        printf("\ty:"); for (size_t i=0; i < n; ++i) printf(" %2u", y[i]);
+        printf("\td:"); for (size_t i=0; i < n-1; ++i) printf(" %2zu", da[i]);
+        printf("\tquad: %u, wt: %zu\n", quad, dw);
 #endif
-          
-          /* Ici nous avons un voisin mot de code à bonne distance ! */
+
+        /* Ici nous avons un voisin mot de code à bonne distance ! */
+        if (quad < qmax)
           Scur[quad]++;
-          if (sp_cmp(Sbest, Scur, qmax) > 0)
-            break;
-        } while (delta_next(n, dmax, d)); /* Voisin suivant */
 
-        /* On vérifie aussi que le spectre courant reste meilleur que le meilleur jusqu'ici */
-      } while(cw_next(n, h, x) && sp_cmp(Sbest, Scur, qmax) <= 0); /* Mot de code suivant */
+        /* Voisin suivant */
+        size_t j = df[0];
+        df[0] = 0;
+
+        if (j == n-1) break; // Terminate
+        if (da[j] == 0) dw++;
+        da[j] += dd[j];
+        if (da[j] == 0) dw--;
+
+        if (da[j] == 0 || da[j] == q-1 || da[j] + dd[j] >= dcap[dw * q + x[j]]) {
+        /* if (da[j] == 0 || da[j] == q-1) { */
+          dd[j] = -dd[j];
+          df[j] = df[j+1];
+          df[j+1] = j+1;
+        }
+      }
+
+      /* On vérifie aussi que le spectre courant reste meilleur que le meilleur jusqu'ici */
+    } while(cw_next(n, h, x) && sp_cmp(Sbest, Scur, qmax) <= 0); /* Mot de code suivant */
 #ifdef DEBUG
-      printf("  s: "); sp_print(Scur, qmax); printf("\n");
+    /* H en premier */
+    printf("  h:");
+    for (size_t i = 0; i < n; ++i)
+      printf("%2u ", h[i]);
+    printf("\t");
+    /* S ensuite */
+    unsigned long sum = 0;
+    for (size_t i = 0; i < qmax; ++i) {
+      sum += Scur[i];
+      printf("%lu\t", Scur[i]);
+    }
+    printf("\t(%lu)\n", sum);
+    fflush(stdout);
 #endif
 
-      /* On garde ce spectre si c'est le meilleur jusrq'ici. */
-      if (sp_cmp(Sbest, Scur, qmax) <= 0) {
-        memcpy(Sbest, Scur, (qmax + 1) * sizeof *Sbest);
-        memcpy(Hbest, h, n * sizeof *h);
-        
-        printf("  S: "); sp_print(Sbest, qmax); printf("\n");
-        printf("  H: "); for (size_t i = 0; i < n; ++i) printf("%x ", gf_exp[Hbest[i]]);
-        printf("= "); for (size_t i = 0; i < n; ++i) printf("a^%u ", Hbest[i]); printf("\n");
-        fflush(stdout);
+    /* On garde ce spectre si c'est le meilleur jusrq'ici. */
+    if (sp_cmp(Sbest, Scur, qmax) <= 0) {
+      memcpy(Sbest, Scur, qmax * sizeof *Sbest);
+
+      /* H en premier */
+      for (size_t i = 0; i < n; ++i)
+        printf("%2u ", h[i]);
+      printf("\t");
+      /* S ensuite */
+      unsigned long sum = 0;
+      for (size_t i = 0; i < qmax; ++i) {
+        sum += Sbest[i];
+        printf("%lu\t", Sbest[i]);
       }
-    } while (chk_next(n, h));    /* Parité suivante */
-    
-    printf("S: "); sp_print(Sbest, qmax); printf("\n");
-    printf("H: "); for (size_t i = 0; i < n; ++i) printf("%x ", gf_exp[Hbest[i]]);
-    printf("= "); for (size_t i = 0; i < n; ++i) printf("a^%u ", Hbest[i]); printf("\n");
-  } /* Mapping suivant */
-  
+      printf("\t(%lu)\n", sum);
+      fflush(stdout);
+    }
+  } while (chk_next(n, h));    /* Parité suivante */
+
+
   /* Libération des ressources */
   if (f != stdin) fclose (stdin);
   free(Scur);
   free(Sbest);
-  free(Hbest);  
-  free(V[0]); free(V);
-  free(Q[0]); free(Q);
+  free(V);
+  free(Q);
   free(C);
   free(pi);
-  free(d);
+  free(da);
+  free(df);
+  free(dd);
   free(y);
   free(x);
   free(h);
