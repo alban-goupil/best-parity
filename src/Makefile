@@ -3,7 +3,7 @@ CC=gcc
 #CFLAGS=-Wall -g -DDEBUG
 CFLAGS=-Wall -Ofast
 
-BINS=best-parity spectra
+BINS=best-parity spectra crible combinations
 
 all: $(BINS)
 
