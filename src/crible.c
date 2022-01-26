@@ -298,7 +298,9 @@ int main(int argc, char **argv) {
   /* ** Lecture du mapping */
   unsigned *pi = malloc(q * sizeof *pi); // Le mapping
   
-  if (NULL == (f = fopen(mapsfile, "r")))
+  if (strcmp (mapsfile, "-") == 0)
+    f = stdin;
+  else if (NULL == (f = fopen(mapsfile, "r")))
     error("Impossible d'ouvrir le fichier mapping '%s'.", mapsfile); 
 
   for (unsigned i = 0; i < q; ++i)
@@ -311,7 +313,8 @@ int main(int argc, char **argv) {
   for (unsigned i = 0; i < q; ++i)
     printf(" %u", pi[i]);
   printf("\n");
-  fflush(stdout);
+  if (f != stdin)
+    fclose(f);
 
   
   /* ** Construction du corps q=2^m */
@@ -377,7 +380,7 @@ int main(int argc, char **argv) {
   
   
   /* Pour chaque parité h de longueur n */
-  if (strcmp (mapsfile, "-") == 0)
+  if (strcmp (hfile, "-") == 0)
     f = stdin;
   else if (NULL == (f = fopen(hfile, "r")))
     error("Impossible d'ouvrir le fichier de parités '%s'.", hfile); 

@@ -1,7 +1,7 @@
 CC=gcc
-#CFLAGS=-Wall -g
+CFLAGS=-Wall -g
 #CFLAGS=-Wall -g -DDEBUG
-CFLAGS=-Wall -Ofast
+#CFLAGS=-Wall -Ofast
 
 BINS=best-parity spectra crible combinations
 
